@@ -1,7 +1,5 @@
 # Expense Calculator
 
-A simple Flutter app for managing daily expenses with Firebase integration.
-
 ## Features
 
 - Add, edit, delete expenses
