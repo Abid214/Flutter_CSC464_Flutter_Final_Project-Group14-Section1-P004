@@ -6,8 +6,9 @@ import '../models/expense.dart';
 
 class AddExpenseScreen extends StatefulWidget {
   final Expense? expense;
+  final VoidCallback? onExpenseSaved;
 
-  const AddExpenseScreen({super.key, this.expense});
+  const AddExpenseScreen({super.key, this.expense, this.onExpenseSaved});
 
   @override
   _AddExpenseScreenState createState() => _AddExpenseScreenState();
@@ -15,23 +16,96 @@ class AddExpenseScreen extends StatefulWidget {
 
 class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
-  String name = '';
-  double amount = 0.0;
+  late TextEditingController _nameController;
+  late TextEditingController _amountController;
+  late TextEditingController _descriptionController;
   DateTime date = DateTime.now();
   String category = 'Food';
-  String description = '';
   String? _errorMessage;
   bool _isLoading = false;
+  late String name;
+  late double amount;
+  late String description;
 
   @override
   void initState() {
     super.initState();
+    _nameController = TextEditingController(text: widget.expense?.name ?? '');
+    _amountController = TextEditingController(
+      text: widget.expense?.amount.toString() ?? '',
+    );
+    _descriptionController = TextEditingController(
+      text: widget.expense?.description ?? '',
+    );
+    name = widget.expense?.name ?? '';
+    amount = widget.expense?.amount ?? 0.0;
+    description = widget.expense?.description ?? '';
     if (widget.expense != null) {
-      name = widget.expense!.name;
-      amount = widget.expense!.amount;
       date = widget.expense!.date;
       category = widget.expense!.category;
-      description = widget.expense!.description ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _amountController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  void _resetForm() {
+    _nameController.clear();
+    _amountController.clear();
+    _descriptionController.clear();
+    setState(() {
+      date = DateTime.now();
+      category = 'Food';
+      _errorMessage = null;
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _deleteExpense() async {
+    if (widget.expense == null) return;
+    final firestoreService = Provider.of<FirestoreService>(
+      context,
+      listen: false,
+    );
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Expense'),
+        content: const Text('Are you sure you want to delete this expense?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      setState(() => _isLoading = true);
+      try {
+        await firestoreService.deleteExpense(widget.expense!.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Expense deleted successfully')),
+          );
+          widget.onExpenseSaved?.call();
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        setState(() {
+          _errorMessage = 'Failed to delete expense: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -49,6 +123,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
         ),
         elevation: 0,
+        actions: widget.expense != null
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.delete),
+                  onPressed: _deleteExpense,
+                ),
+              ]
+            : null,
       ),
       body: Container(
         color: Colors.grey[50],
@@ -64,7 +146,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 ),
                 const SizedBox(height: 20),
                 TextFormField(
-                  initialValue: name,
+                  controller: _nameController,
                   decoration: InputDecoration(
                     labelText: 'Expense Name',
                     prefixIcon: const Icon(Icons.label_outline),
@@ -72,21 +154,25 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                   ),
                   validator: (value) =>
                       value!.isEmpty ? 'Enter expense name' : null,
-                  onSaved: (value) => name = value!,
+                  onSaved: (value) => name = value ?? '',
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
-                  initialValue: amount.toString(),
+                  controller: _amountController,
                   decoration: InputDecoration(
                     labelText: 'Amount',
                     prefixIcon: const Icon(Icons.attach_money),
                     hintText: 'e.g., 25.50',
                   ),
                   keyboardType: TextInputType.number,
-                  validator: (value) => double.tryParse(value!) == null
-                      ? 'Enter valid amount'
-                      : null,
-                  onSaved: (value) => amount = double.parse(value!),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) return 'Enter amount';
+                    final num = double.tryParse(value);
+                    if (num == null) return 'Enter valid amount';
+                    if (num <= 0) return 'Amount must be positive';
+                    return null;
+                  },
+                  onSaved: (value) => amount = double.parse(value ?? '0'),
                 ),
                 const SizedBox(height: 16),
                 Container(
@@ -163,7 +249,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
-                  initialValue: description,
+                  controller: _descriptionController,
                   decoration: InputDecoration(
                     labelText: 'Description (optional)',
                     prefixIcon: const Icon(Icons.note_outlined),
@@ -253,21 +339,28 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                                   setState(() {
                                     _isLoading = false;
                                     _errorMessage = null;
-                                    if (widget.expense == null) {
-                                      name = '';
-                                      amount = 0.0;
-                                      date = DateTime.now();
-                                      category = 'Food';
-                                      description = '';
+                                  });
+                                  if (widget.expense == null) {
+                                    _resetForm();
+                                  }
+                                  _formKey.currentState?.reset();
+                                  // Force rebuild to clear form fields
+                                  Future.delayed(Duration.zero, () {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: const Text(
+                                            '✓ Expense added successfully',
+                                          ),
+                                          backgroundColor: Colors.green,
+                                          duration: const Duration(seconds: 3),
+                                        ),
+                                      );
+                                      widget.onExpenseSaved?.call();
                                     }
                                   });
-                                  _formKey.currentState?.reset();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Expense saved'),
-                                      duration: Duration(seconds: 2),
-                                    ),
-                                  );
                                 }
                               }
                             } catch (e, stackTrace) {
