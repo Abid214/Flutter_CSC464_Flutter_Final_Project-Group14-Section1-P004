@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
-import 'add_expense_screen.dart';
 import 'analytics_screen.dart';
 
 class MainScaffold extends StatefulWidget {
